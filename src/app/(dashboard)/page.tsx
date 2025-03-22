@@ -1,5 +1,4 @@
 "use client";
-import { UploadCloud } from "lucide-react"
 import { AppSidebar } from "@/components/app-sidebar"
 import {
   Breadcrumb,
