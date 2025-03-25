@@ -5,11 +5,44 @@ import toast from "react-hot-toast"
 export const Upload = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [extractedText, setExtractedText] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleFileSelect = (file: File) => {
+  const handleFileSelect = async (file: File) => {
     if (file && file.size <= 10 * 1024 * 1024) {
       if (file.type === "application/pdf" || file.type === "image/png") {
         setSelectedFile(file)
+        
+        if (file.type === "application/pdf") {
+          try {
+            setIsLoading(true)
+            
+            // Create form data
+            const formData = new FormData()
+            formData.append('file', file)
+            
+            // Send to Flask backend
+            const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL_ENDPOINT}/extract-text`, {
+              method: 'POST',
+              body: formData,
+            })
+            
+            const data = await response.json()
+            
+            if (data.error) {
+              throw new Error(data.error)
+            }
+            
+            setExtractedText(data.text)
+            toast.success("PDF text extracted successfully!")
+          } catch (error) {
+            console.error("PDF processing error:", error)
+            toast.error("Failed to extract PDF text")
+          } finally {
+            setIsLoading(false)
+          }
+        }
+        
         toast.success("File uploaded successfully!")
       } else {
         toast.error("Please upload a PDF or PNG file")
@@ -110,6 +143,25 @@ export const Upload = () => {
           </label>
         )}
       </div>
+
+      {isLoading && (
+        <div className="mt-4 p-4 border rounded-lg bg-muted/50">
+          <p className="text-center text-muted-foreground">
+            Extracting text from PDF...
+          </p>
+        </div>
+      )}
+
+      {extractedText && !isLoading && (
+        <div className="mt-4 p-4 border rounded-lg">
+          <h3 className="font-semibold mb-2">Extracted Text:</h3>
+          <div className="max-h-[500px] overflow-y-auto bg-muted/50 p-4 rounded-md">
+            <pre className="whitespace-pre-wrap font-mono text-sm">
+              {extractedText}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
