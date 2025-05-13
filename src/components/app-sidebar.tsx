@@ -1,5 +1,6 @@
 import * as React from "react"
 import { GalleryVerticalEnd } from "lucide-react"
+import { UserProfile } from "@/components/auth/UserProfile"
 
 import {
   Sidebar,
@@ -79,6 +80,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             ))}
           </SidebarMenu>
         </SidebarGroup>
+        
+        {/* User Profile at the bottom of sidebar */}
+        <div className="px-3 pb-4 mt-auto">
+          <UserProfile />
+        </div>
       </SidebarContent>
     </Sidebar>
   )

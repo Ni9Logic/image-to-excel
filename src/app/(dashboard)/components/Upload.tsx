@@ -1,7 +1,10 @@
 import { UploadCloud, X, Merge, Download } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import toast from "react-hot-toast"
 import * as XLSX from 'xlsx'
+import { useAuth } from "@/contexts/AuthContext"
+import { AuthModal } from "@/components/auth/AuthModal"
+import { uploadDocument, deleteDocument } from "@/lib/blob-service"
 
 interface TableData {
   headers: string[];
@@ -15,14 +18,14 @@ interface TableControlsProps {
   onExport: () => void;
 }
 
-const TableControls = ({ tables, selectedTables, onMerge, onExport }: TableControlsProps) => {
+function TableControls({ tables, selectedTables, onMerge, onExport }: TableControlsProps) {
   return (
     <div className="flex items-center justify-end gap-2">
       {tables.length > 1 && (
         <button
           onClick={onMerge}
           disabled={selectedTables.length < 2}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200
             ${selectedTables.length >= 2 
               ? "bg-primary text-primary-foreground hover:bg-primary/90" 
               : "bg-muted text-muted-foreground cursor-not-allowed"}`}
@@ -33,7 +36,7 @@ const TableControls = ({ tables, selectedTables, onMerge, onExport }: TableContr
       )}
       <button
         onClick={onExport}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors duration-200"
       >
         <Download className="w-4 h-4" />
         {selectedTables.length > 0 
@@ -41,28 +44,28 @@ const TableControls = ({ tables, selectedTables, onMerge, onExport }: TableContr
           : 'Export All Tables'}
       </button>
     </div>
-  )
+  );
 }
 
 interface TableCardProps {
   table: TableData;
   index: number;
   isSelected: boolean;
-  onSelect: () => void;
+  onSelect: (index: number) => void;
 }
 
-const TableCard = ({ table, index, isSelected, onSelect }: TableCardProps) => {
+function TableCard({ table, index, isSelected, onSelect }: TableCardProps) {
   return (
     <div 
-      className={`border rounded-xl overflow-hidden bg-card shadow-sm hover:shadow-md transition-all duration-200
+      className={`border rounded-xl overflow-hidden bg-card shadow-sm hover:shadow-md transition-shadow duration-200
         ${isSelected ? "ring-2 ring-primary" : ""}`}
     >
       <div className="p-4 border-b bg-gradient-to-r from-muted/50 to-muted/30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
-              onClick={onSelect}
-              className={`w-5 h-5 rounded border transition-colors
+              onClick={() => onSelect(index)}
+              className={`w-5 h-5 rounded border transition-colors duration-200
                 ${isSelected 
                   ? "bg-primary border-primary" 
                   : "border-muted-foreground/30 hover:border-primary"}`}
@@ -92,7 +95,7 @@ const TableCard = ({ table, index, isSelected, onSelect }: TableCardProps) => {
             {table.data.map((row: string[], rowIndex: number) => (
               <tr 
                 key={rowIndex}
-                className="hover:bg-muted/30 transition-colors"
+                className="hover:bg-muted/30 transition-colors duration-200"
               >
                 {row.map((cell: string, cellIndex: number) => (
                   <td 
@@ -113,7 +116,7 @@ const TableCard = ({ table, index, isSelected, onSelect }: TableCardProps) => {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 export const Upload = () => {
@@ -122,7 +125,12 @@ export const Upload = () => {
   const [extractedText, setExtractedText] = useState<string>("")
   const [extractedTables, setExtractedTables] = useState<TableData[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [processingStep, setProcessingStep] = useState<string>("")
   const [selectedTables, setSelectedTables] = useState<number[]>([])
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [documentId, setDocumentId] = useState<string | null>(null)
+  const { user } = useAuth()
 
   const areTablesIdentical = (table1: TableData, table2: TableData): boolean => {
     if (table1.headers.length !== table2.headers.length) return false
@@ -205,54 +213,114 @@ export const Upload = () => {
   }
 
   const handleFileSelect = async (file: File) => {
+    if (!user) {
+      setIsAuthModalOpen(true)
+      return
+    }
+
     if (file && file.size <= 10 * 1024 * 1024) {
-      if (file.type === "application/pdf" || file.type === "image/png") {
+      if (file.type === "application/pdf" || file.type.startsWith("image/")) {
         setSelectedFile(file)
+        setIsLoading(true)
+        setProcessingStep("Uploading file...")
+        setUploadProgress(0)
         
-        if (file.type === "application/pdf") {
-          try {
-            setIsLoading(true)
-            
-            const formData = new FormData()
-            formData.append('file', file)
-            
-            const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL_ENDPOINT}/extract-text`, {
-              method: 'POST',
-              body: formData,
+        try {
+          // Simulate upload progress
+          const progressInterval = setInterval(() => {
+            setUploadProgress(prev => {
+              if (prev >= 90) {
+                clearInterval(progressInterval)
+                return 90
+              }
+              return prev + 10
             })
-            
-            const data = await response.json()
-            
-            if (data.error) {
-              throw new Error(data.error)
-            }
-            
-            setExtractedText(data.text)
-            setExtractedTables(data.tables)
-            toast.success("PDF text and tables extracted successfully!")
-          } catch (error) {
-            console.error("PDF processing error:", error)
-            toast.error("Failed to extract PDF content")
-          } finally {
-            setIsLoading(false)
+          }, 300)
+          
+          // Upload file to blob storage (now with addRandomSuffix: true)
+          const result = await uploadDocument(file, user.uid)
+          setDocumentId(result.id) // Save the document ID for later deletion
+          clearInterval(progressInterval)
+          setUploadProgress(100)
+          
+          // Start extraction process
+          setProcessingStep("Extracting content...")
+          setUploadProgress(0)
+          
+          // Simulate extraction progress
+          const extractionInterval = setInterval(() => {
+            setUploadProgress(prev => {
+              if (prev >= 90) {
+                clearInterval(extractionInterval)
+                return 90
+              }
+              return prev + 5
+            })
+          }, 200)
+          
+          // Make API call to backend for extraction
+          const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL_ENDPOINT}/extract-text`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ userId: user.uid }),
+          })
+          
+          clearInterval(extractionInterval)
+          setUploadProgress(100)
+          
+          const data = await response.json()
+          
+          if (data.error) {
+            throw new Error(data.error)
           }
+          
+          setExtractedText(data.text)
+          setExtractedTables(data.tables)
+          
+          const fileType = file.type === "application/pdf" ? "PDF" : "Image"
+          toast.success(`${fileType} content extracted successfully!`)
+        } catch (error) {
+          console.error("Processing error:", error)
+          toast.error(`Failed to extract content: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        } finally {
+          setIsLoading(false)
+          setProcessingStep("")
+          setUploadProgress(0)
         }
         
         toast.success("File uploaded successfully!")
       } else {
-        toast.error("Please upload a PDF or PNG file")
+        toast.error("Please upload a PDF or image file (PNG, JPG, JPEG)")
       }
     } else {
       toast.error("File size should be less than 10MB")
     }
   }
 
-  const clearFile = () => {
-    setSelectedFile(null)
-    setExtractedText("")
-    setExtractedTables([])
-    setSelectedTables([])
-    toast.success("File removed")
+  const clearFile = async () => {
+    if (isLoading) return
+    
+    try {
+      if (documentId && user) {
+        setProcessingStep("Deleting file...")
+        setIsLoading(true)
+        await deleteDocument(documentId)
+        toast.success("File deleted successfully")
+      }
+    } catch (error) {
+      console.error("Error deleting document:", error)
+      toast.error("Failed to delete file")
+    } finally {
+      setSelectedFile(null)
+      setExtractedText("")
+      setExtractedTables([])
+      setSelectedTables([])
+      setDocumentId(null)
+      setIsLoading(false)
+      setProcessingStep("")
+    }
   }
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -275,111 +343,132 @@ export const Upload = () => {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-      <div className="flex items-center justify-center w-full">
-        {selectedFile ? (
-          <div className="w-full h-64 border-2 rounded-lg border-muted bg-muted/50 p-4 transition-all">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-primary/10 rounded-lg">
-                  <UploadCloud className="w-5 h-5 text-primary" />
+    <>
+      <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <div className="flex items-center justify-center w-full">
+          {selectedFile ? (
+            <div className="w-full h-64 border-2 rounded-lg border-muted bg-muted/50 p-4 transition-all">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <UploadCloud className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">{selectedFile.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {(selectedFile.size / (1024 * 1024)).toFixed(2)}MB
+                    </span>
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium">{selectedFile.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {(selectedFile.size / (1024 * 1024)).toFixed(2)}MB
-                  </span>
-                </div>
+                <button
+                  onClick={clearFile}
+                  className="p-2 hover:bg-destructive/10 rounded-full transition-colors duration-200"
+                  aria-label="Remove file"
+                  disabled={isLoading}
+                >
+                  <X className="w-4 h-4 text-destructive" />
+                </button>
               </div>
-              <button
-                onClick={clearFile}
-                className="p-2 hover:bg-destructive/10 rounded-full transition-colors"
-                aria-label="Remove file"
-              >
-                <X className="w-4 h-4 text-destructive" />
-              </button>
+            </div>
+          ) : (
+            <label
+              htmlFor="file-upload"
+              className={`flex flex-col items-center justify-center w-full h-64 border-2 border-dashed rounded-lg cursor-pointer transition-all duration-200
+                ${isDragging 
+                  ? "border-primary bg-primary/5" 
+                  : "border-muted bg-muted/50 hover:bg-muted/70"}`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
+                <div className={`p-4 rounded-full mb-3 transition-colors duration-200 ${
+                  isDragging ? "bg-primary/10" : "bg-muted"
+                }`}>
+                  <UploadCloud className={`w-8 h-8 ${
+                    isDragging ? "text-primary" : "text-muted-foreground"
+                  }`} />
+                </div>
+                <p className="mb-2 text-sm">
+                  <span className="font-semibold">Click to upload</span> or drag and drop
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  PDF or Image (PNG, JPG, JPEG) (Max size: 10MB)
+                </p>
+              </div>
+              <input
+                id="file-upload"
+                type="file"
+                className="hidden"
+                accept="application/pdf,image/png,image/jpeg,image/jpg"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) {
+                    handleFileSelect(file)
+                  }
+                }}
+              />
+            </label>
+          )}
+        </div>
+
+        {isLoading && (
+          <div className="mt-4 p-4 border rounded-lg bg-muted/50">
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-medium text-muted-foreground">
+                  {processingStep}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {uploadProgress}%
+                </span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-2.5">
+                <div 
+                  className="bg-primary h-2.5 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
             </div>
           </div>
-        ) : (
-          <label
-            htmlFor="file-upload"
-            className={`flex flex-col items-center justify-center w-full h-64 border-2 border-dashed rounded-lg cursor-pointer transition-all
-              ${isDragging 
-                ? "border-primary bg-primary/5" 
-                : "border-muted bg-muted/50 hover:bg-muted/70"}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <div className="flex flex-col items-center justify-center pt-5 pb-6 px-4 text-center">
-              <div className={`p-4 rounded-full mb-3 transition-colors ${
-                isDragging ? "bg-primary/10" : "bg-muted"
-              }`}>
-                <UploadCloud className={`w-8 h-8 ${
-                  isDragging ? "text-primary" : "text-muted-foreground"
-                }`} />
-              </div>
-              <p className="mb-2 text-sm">
-                <span className="font-semibold">Click to upload</span> or drag and drop
-              </p>
-              <p className="text-xs text-muted-foreground">
-                PDF or PNG (Max size: 10MB)
-              </p>
+        )}
+
+        {extractedText && !isLoading && (
+          <div className="mt-4 p-4 border rounded-lg">
+            <h3 className="font-semibold mb-2">Extracted Text:</h3>
+            <div className="max-h-[500px] overflow-y-auto bg-muted/50 p-4 rounded-md">
+              <pre className="whitespace-pre-wrap font-mono text-sm">
+                {extractedText}
+              </pre>
             </div>
-            <input
-              id="file-upload"
-              type="file"
-              className="hidden"
-              accept="application/pdf,.png"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) {
-                  handleFileSelect(file)
-                }
-              }}
+          </div>
+        )}
+
+        {extractedTables.length > 0 && !isLoading && (
+          <div className="mt-4 space-y-8">
+            <TableControls 
+              tables={extractedTables}
+              selectedTables={selectedTables}
+              onMerge={mergeSelectedTables}
+              onExport={exportToExcel}
             />
-          </label>
+            {extractedTables.map((table, index) => (
+              <TableCard
+                key={index}
+                table={table}
+                index={index}
+                isSelected={selectedTables.includes(index)}
+                onSelect={handleTableSelect}
+              />
+            ))}
+          </div>
         )}
       </div>
 
-      {isLoading && (
-        <div className="mt-4 p-4 border rounded-lg bg-muted/50">
-          <p className="text-center text-muted-foreground">
-            Extracting content from PDF...
-          </p>
-        </div>
-      )}
-
-      {extractedText && !isLoading && (
-        <div className="mt-4 p-4 border rounded-lg">
-          <h3 className="font-semibold mb-2">Extracted Text:</h3>
-          <div className="max-h-[500px] overflow-y-auto bg-muted/50 p-4 rounded-md">
-            <pre className="whitespace-pre-wrap font-mono text-sm">
-              {extractedText}
-            </pre>
-          </div>
-        </div>
-      )}
-
-      {extractedTables.length > 0 && !isLoading && (
-        <div className="mt-4 space-y-8">
-          <TableControls 
-            tables={extractedTables}
-            selectedTables={selectedTables}
-            onMerge={mergeSelectedTables}
-            onExport={exportToExcel}
-          />
-          {extractedTables.map((table, index) => (
-            <TableCard
-              key={index}
-              table={table}
-              index={index}
-              isSelected={selectedTables.includes(index)}
-              onSelect={() => handleTableSelect(index)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+      <AuthModal 
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
+    </>
   )
 }
